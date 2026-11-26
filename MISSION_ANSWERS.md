@@ -303,17 +303,17 @@ Chạy `python check_production_ready.py` trong `06-lab-complete/` với Docker 
      ✅ Graceful shutdown
      ✅ Public URL ready (Railway / Render config)
 ----------------------------------------------------------------
-  Result: 12/12 tiêu chí đạt · 41/41 checks passed
+  Result: 12/12 tiêu chí đạt · 43/43 checks passed
   🎉 PASS 12/12 — PRODUCTION READY! Deploy nào!
 ```
 
-Script đo image **63 MB**. Khi gửi `SIGTERM`, request đang chạy vẫn trả `200` và tiến trình thoát với mã `0`. Lệnh `docker stop` hoàn tất trong **0,8 giây** với mã thoát `0`.
+Trong lượt chạy lại trước khi nộp, script đo image **63 MB**. Khi gửi `SIGTERM`, request đang chạy vẫn trả `200` và tiến trình thoát với mã `0`. Lệnh `docker stop` hoàn tất trong **1,0 giây** với mã thoát `0`.
 
 Trong phép kiểm tra riêng qua Compose trên `127.0.0.1:8010`, `/health` và `/ready` trả `200`, thiếu hoặc sai API key đều trả `401`. Gửi 20 request đồng thời với một key hợp lệ cho kết quả **10 lần `200` và 10 lần `429`**. Với một Redis mới và ngân sách `0.000001 USD`, request đầu trả `200` và request kế tiếp trả `402` sau khi chi phí đã được ghi.
 
 Rate limiter kiểm tra và ghi lượt gọi trong cùng một thao tác Redis. Cost guard kiểm tra tổng chi phí đã ghi trước mỗi lượt gọi và cộng chi phí sau khi mock LLM trả lời. Vì vậy, các lượt đang xử lý có thể cùng được chấp nhận trước khi tổng chi phí chạm ngưỡng.
 
-Tiêu chí cuối kiểm tra cấu hình `railway.toml` và việc đọc `PORT`. URL công khai sẽ được kiểm tra ở CP6.
+Tiêu chí cuối kiểm tra cả `railway.toml`, `render.yaml` và việc đọc `PORT`. Kết quả kiểm tra URL công khai của CP6 được ghi trong [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## AI log
 
@@ -325,3 +325,4 @@ Tiêu chí cuối kiểm tra cấu hình `railway.toml` và việc đọc `PORT`
 
 - **CP6, ngày 26-11-2026.** Người học tạo Blueprint trên Render và cung cấp URL để kiểm tra. AI gọi bốn request HTTPS trên service đã deploy, xác minh mã phản hồi và ghi kết quả vào Part 3 cùng `DEPLOYMENT.md`.
 - **CP7, ngày 26-11-2026.** Người học khởi động hai agent local và kiểm tra `/ask`, `/metrics`. AI bổ sung và kiểm tra histogram, chạy load test theo bốn mức concurrency và ba mức slow rate, chạy eval baseline, bổ sung hai mục trong knowledge base rồi kiểm tra quality gate. Các bảng trong `BENCHMARK_REPORT.md` dùng số từ tệp JSON của các lượt chạy. Phần tự đối chiếu và chỉnh sửa sẽ được người học bổ sung sau khi đọc lại.
+- **CP8, ngày 26-11-2026.** AI xác định lỗi runtime của Dockerfile observability và bổ sung `PYTHONUSERBASE`. AI chạy hai lượt benchmark đã xác minh số instance, dùng `--no-deps` để Locust giữ nguyên scale, đo các chỉ số và thời gian alert từ Prometheus, đối chiếu Jaeger với log theo `trace_id` và điền `BENCHMARK_REPORT.md`. AI chụp Grafana, trace chậm và hai alert firing từ giao diện local. Người học chụp trace lỗi có event `exception`, AI kiểm tra ảnh khớp với trace trong báo cáo.
