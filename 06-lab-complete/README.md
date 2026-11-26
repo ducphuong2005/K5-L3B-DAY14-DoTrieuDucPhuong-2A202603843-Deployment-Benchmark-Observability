@@ -84,16 +84,18 @@ Script tự khởi động agent của bạn, gọi API thật, build và chạy
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
+export AGENT_API_KEY="$(openssl rand -hex 24)"
 
 # Chạy nhanh không cần Docker (cần Redis riêng nếu muốn test rate limit thật)
-AGENT_API_KEY=dev-key uvicorn app.main:app --reload
+PORT=8010 uvicorn app.main:app --port 8010 --reload
 
-# Chạy cả agent + redis
-docker compose up --build
+# Hoặc chạy cả agent + Redis, sau khi dừng Uvicorn ở trên
+docker compose up -d --build
 
-curl http://localhost:8000/health
-curl -X POST http://localhost:8000/ask \
-     -H "X-API-Key: dev-key" -H "Content-Type: application/json" \
+curl http://127.0.0.1:8010/health
+curl http://127.0.0.1:8010/ready
+curl -X POST http://127.0.0.1:8010/ask \
+     -H "X-API-Key: $AGENT_API_KEY" -H "Content-Type: application/json" \
      -d '{"question": "What is deployment?"}'
 ```
 

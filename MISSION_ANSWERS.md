@@ -263,9 +263,41 @@ Script gửi 5 request `POST /chat` với cùng một session qua 3 instance r�
 
 Sau khi kiểm tra, chạy `docker compose -p k5-day14-scaling down` để dọn stack và trả lại cổng `8080`.
 
+## Part 6 · Production-ready agent
+
+Chạy `python check_production_ready.py` trong `06-lab-complete/` với Docker Desktop đang hoạt động.
+
+```text
+  📋 Checklist Deliverable
+     ✅ Dockerfile (multi-stage, < 500 MB)
+     ✅ docker-compose.yml (agent + redis)
+     ✅ .dockerignore
+     ✅ Health check endpoint (GET /health)
+     ✅ Readiness endpoint (GET /ready)
+     ✅ API Key authentication
+     ✅ Rate limiting
+     ✅ Cost guard
+     ✅ Config từ environment variables
+     ✅ Structured logging
+     ✅ Graceful shutdown
+     ✅ Public URL ready (Railway / Render config)
+----------------------------------------------------------------
+  Result: 12/12 tiêu chí đạt · 41/41 checks passed
+  🎉 PASS 12/12 — PRODUCTION READY! Deploy nào!
+```
+
+Script đo image **63 MB**. Khi gửi `SIGTERM`, request đang chạy vẫn trả `200` và tiến trình thoát với mã `0`. Lệnh `docker stop` hoàn tất trong **0,8 giây** với mã thoát `0`.
+
+Trong phép kiểm tra riêng qua Compose trên `127.0.0.1:8010`, `/health` và `/ready` trả `200`, thiếu hoặc sai API key đều trả `401`. Gửi 20 request đồng thời với một key hợp lệ cho kết quả **10 lần `200` và 10 lần `429`**. Với một Redis mới và ngân sách `0.000001 USD`, request đầu trả `200` và request kế tiếp trả `402` sau khi chi phí đã được ghi.
+
+Rate limiter kiểm tra và ghi lượt gọi trong cùng một thao tác Redis. Cost guard kiểm tra tổng chi phí đã ghi trước mỗi lượt gọi và cộng chi phí sau khi mock LLM trả lời. Vì vậy, các lượt đang xử lý có thể cùng được chấp nhận trước khi tổng chi phí chạm ngưỡng.
+
+Tiêu chí cuối kiểm tra cấu hình `railway.toml` và việc đọc `PORT`. URL công khai sẽ được kiểm tra ở CP6.
+
 ## AI log
 
 - **CP1, ngày 26-11-2026.** Câu hỏi gửi AI là cách xử lý xung đột cổng và cách hoàn thiện Exercise 1.1–1.3. AI đối chiếu mã nguồn, chạy các lệnh kiểm tra local và soạn phần Part 1 từ phản hồi thực tế. Người học đã tạo môi trường Python và khởi động bản production trên cổng `8010`. 
 - **CP2, ngày 26-11-2026.** 1–2.4. AI đọc Dockerfile và Compose, chạy lại hai lệnh build trên máy lab, đo kích thước bằng Docker, thử container develop và stack Nginx, rồi ghi kết quả vào Part 2. 
 - **CP3, ngày 26-11-2026.** kiểm tra Exercise 4.1–4.4 và hoàn thiện Part 4. AI đọc mã nguồn, chạy test API key và JWT trên máy lab, ghi lại các status HTTP thực tế, giữ kín token và giải thích cost guard.
-- **CP4, ngày 26-11-2026.** Exercise 5.1–5.5, AI chạy stack 3 agent, ghi kết quả `test_stateless.py` và các probe khi Redis hoạt động và khi dừng, kiểm tra log shutdown rồi dọn stack. 
+- **CP4, ngày 26-11-2026.** Exercise 5.1–5.5, AI chạy stack 3 agent, ghi kết quả `test_stateless.py` và các probe khi Redis hoạt động và khi dừng, kiểm tra log shutdown rồi dọn stack.
+- **CP5, ngày 26-11-2026.** AI triển khai config, health và readiness, log JSON, auth, rate limit và cost guard bằng Redis, graceful shutdown, Docker và cấu hình Railway. AI chạy kiểm tra tĩnh theo từng nhóm, chạy bài chấm đầy đủ với Docker, kiểm tra riêng Compose và cost guard, rồi ghi output thực tế. 
