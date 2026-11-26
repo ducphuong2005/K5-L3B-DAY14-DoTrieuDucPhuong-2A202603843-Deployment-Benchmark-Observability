@@ -148,7 +148,71 @@ Kết quả thực tế ghi nhận một container cho mỗi service. Agent, Red
 
 Sau khi ghi kết quả, container develop đã được dừng và stack production đã được dọn bằng `docker compose -p k5-day14-docker down`.
 
+## Part 4 · API Security
+
+### Exercise 4.1 · Kiểm tra API key
+
+Chạy bản `04-api-gateway/develop` tại `127.0.0.1:8010` với key demo của lab. Dependency `verify_api_key` đọc header `X-API-Key` và kiểm tra trước khi handler `/ask` chạy. Bản develop trả `401` khi thiếu key và `403` khi key sai. Để đổi key, đặt giá trị mới cho biến môi trường `AGENT_API_KEY`, khởi động lại ứng dụng rồi cập nhật key ở phía client. [develop/app.py:35](04-api-gateway/develop/app.py#L35)
+
+**Thiếu header `X-API-Key`.**
+
+```http
+HTTP/1.1 401 Unauthorized
+content-type: application/json
+
+{"detail":"Missing API key. Include header: X-API-Key: <your-key>"}
+```
+
+**Có key demo hợp lệ.**
+
+```http
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"question":"Hello","answer":"Đây là câu trả lời từ AI agent (mock). Trong production, đây sẽ là response từ OpenAI/Anthropic."}
+```
+
+### Exercise 4.2 · Lấy JWT và gọi API
+
+Sau khi dừng bản develop, chạy bản `04-api-gateway/production` trên cùng cổng `8010`. Gửi thông tin tài khoản demo `student` đến `POST /auth/token`, lấy `access_token` và dùng header `Authorization: Bearer $TOKEN` để gọi `POST /ask`. App ký JWT với thông tin người dùng, vai trò và hạn dùng 60 phút. App xác minh chữ ký và hạn dùng trước khi xử lý yêu cầu. Giá trị token và phần gợi ý chứa tiền tố token đã được bỏ khỏi báo cáo. [production/app.py:105](04-api-gateway/production/app.py#L105) · [auth.py:35](04-api-gateway/production/auth.py#L35)
+
+**Request JWT đầu tiên.**
+
+```http
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"question":"Explain JWT","answer":"Tôi là AI agent được deploy lên cloud. Câu hỏi của bạn đã được nhận.","usage":{"requests_remaining":9,"budget_remaining_usd":1.9e-05}}
+```
+
+Trong phản hồi mẫu, trường `usage.budget_remaining_usd` đang nhận `usage.total_cost_usd`. Giá trị `1.9e-05` là chi phí đã dùng theo mã hiện tại. Endpoint `/me/usage` tính phần ngân sách còn lại bằng cách lấy ngân sách trừ chi phí đã dùng. [production/app.py:153](04-api-gateway/production/app.py#L153) · [cost_guard.py:112](04-api-gateway/production/cost_guard.py#L112)
+
+### Exercise 4.3 · Sliding-window rate limit
+
+Gửi 20 request liên tiếp với token của `student` sau khi khởi động app. Request 1–10 trả `200`. Request 11–20 trả `429`. Dưới đây là phản hồi của request 11.
+
+```http
+HTTP/1.1 429 Too Many Requests
+x-ratelimit-limit: 10
+x-ratelimit-remaining: 0
+retry-after: 59
+content-type: application/json
+
+{"detail":{"error":"Rate limit exceeded","limit":10,"window_seconds":60,"retry_after_seconds":59}}
+```
+
+Rate limiter lưu thời điểm request theo từng người dùng trong một `deque`. Với mỗi request, nó bỏ các mốc nằm ngoài cửa sổ 60 giây rồi đếm số mốc còn lại. Khi đủ hạn mức, nó trả `429` kèm `Retry-After`. Tài khoản thường được 10 request trong 60 giây. Tài khoản có role `admin` dùng bộ giới hạn riêng với 100 request trong 60 giây. [rate_limiter.py:29](04-api-gateway/production/rate_limiter.py#L29) · [rate_limiter.py:85](04-api-gateway/production/rate_limiter.py#L85)
+
+### Exercise 4.4 · Cost guard
+
+- Sau khi xác thực và kiểm tra rate limit, app kiểm tra ngân sách trước khi gọi mock LLM. Code mẫu đặt ngân sách **1 USD/người dùng** và **10 USD toàn hệ thống**. Khi chi phí toàn hệ thống chạm ngưỡng, app trả `503`. Khi chi phí của người dùng chạm ngưỡng, app trả `402`. Mốc 80% ngân sách người dùng tạo cảnh báo. [production/app.py:140](04-api-gateway/production/app.py#L140) · [cost_guard.py:60](04-api-gateway/production/cost_guard.py#L60)
+- Sau khi có câu trả lời, app ước lượng token đầu vào và đầu ra, rồi ghi usage. Chi phí được tính theo công thức `input_tokens / 1000 × giá input + output_tokens / 1000 × giá output`. Bộ đếm bản mẫu nằm trong bộ nhớ tiến trình. Khi chạy nhiều instance, Redis hoặc DB có thể giúp các instance dùng chung số liệu. [cost_guard.py:32](04-api-gateway/production/cost_guard.py#L32) · [cost_guard.py:93](04-api-gateway/production/cost_guard.py#L93)
+- Rate limit bảo vệ tốc độ gọi API theo số request trong cửa sổ thời gian. Cost guard bảo vệ ngân sách theo chi phí token tích lũy, vì các request có thể tốn số token khác nhau.
+
+Hai server đã được dừng sau khi kiểm tra và cổng `8010` đã trống.
+
 ## AI log
 
 - **CP1, ngày 26-11-2026.** Câu hỏi gửi AI là cách xử lý xung đột cổng và cách hoàn thiện Exercise 1.1–1.3. AI đối chiếu mã nguồn, chạy các lệnh kiểm tra local và soạn phần Part 1 từ phản hồi thực tế. Người học đã tạo môi trường Python và khởi động bản production trên cổng `8010`. 
 - **CP2, ngày 26-11-2026.** 1–2.4. AI đọc Dockerfile và Compose, chạy lại hai lệnh build trên máy lab, đo kích thước bằng Docker, thử container develop và stack Nginx, rồi ghi kết quả vào Part 2. 
+- **CP3, ngày 26-11-2026.** kiểm tra Exercise 4.1–4.4 và hoàn thiện Part 4. AI đọc mã nguồn, chạy test API key và JWT trên máy lab, ghi lại các status HTTP thực tế, giữ kín token và giải thích cost guard. 
