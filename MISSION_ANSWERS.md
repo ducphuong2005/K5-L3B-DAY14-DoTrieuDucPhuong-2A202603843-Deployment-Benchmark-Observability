@@ -148,6 +148,27 @@ Kết quả thực tế ghi nhận một container cho mỗi service. Agent, Red
 
 Sau khi ghi kết quả, container develop đã được dừng và stack production đã được dọn bằng `docker compose -p k5-day14-docker down`.
 
+## Part 3 · Cloud Deployment
+
+### Exercise 3.2 · Render
+
+Agent Part 6 chạy trên **Render Free** tại [URL công khai](https://day14-agent-xchc.onrender.com). Blueprint tạo Web Service `day14-agent` và Key Value `day14-redis` trong cùng region Singapore. Agent nhận URL kết nối Redis nội bộ qua `REDIS_URL`. [Blueprint của bài](06-lab-complete/render.yaml)
+
+Kiểm tra trực tiếp qua HTTPS cho kết quả `GET /health → 200`, `GET /ready → 200`, `POST /ask` thiếu key `→ 401` và có key hợp lệ `→ 200`. Phản hồi cuối có câu hỏi và câu trả lời của agent. [Lệnh và kết quả](DEPLOYMENT.md)
+
+### So sánh Render và Railway
+
+`railway.toml` cấu hình service agent dùng Dockerfile và đặt health check tại `/health`. Redis được thêm riêng trong project Railway, rồi agent nhận `REDIS_URL` qua biến tham chiếu. Blueprint `render.yaml` khai báo cả Web Service và Key Value, đặt gói Free và region, đồng thời nối `REDIS_URL` qua `fromService`. Render yêu cầu nhập `AGENT_API_KEY` trong dashboard nhờ `sync: false`. Cả hai dùng Dockerfile của Part 6 để chạy agent theo biến `PORT` của nền tảng. [Cấu hình Railway](06-lab-complete/railway.toml) · [Blueprint Render](06-lab-complete/render.yaml)
+
+### Exercise 3.3 · Pipeline Cloud Run
+
+1. Cloud Build cài dependencies và chạy `pytest`.
+2. Pipeline build Docker image, gắn tag theo `COMMIT_SHA` và tag `latest`, rồi đẩy các tag lên registry.
+3. Bước deploy dùng image theo `COMMIT_SHA` để cập nhật dịch vụ Cloud Run ở `asia-southeast1`.
+4. File `service.yaml` mô tả cổng container, giới hạn scaling, các probe `/health` và `/ready`, cùng cách tham chiếu secret.
+
+[Cloud Build](03-cloud-deployment/production-cloud-run/cloudbuild.yaml) · [Cloud Run service](03-cloud-deployment/production-cloud-run/service.yaml)
+
 ## Part 4 · API Security
 
 ### Exercise 4.1 · Kiểm tra API key
@@ -301,3 +322,5 @@ Tiêu chí cuối kiểm tra cấu hình `railway.toml` và việc đọc `PORT`
 - **CP3, ngày 26-11-2026.** kiểm tra Exercise 4.1–4.4 và hoàn thiện Part 4. AI đọc mã nguồn, chạy test API key và JWT trên máy lab, ghi lại các status HTTP thực tế, giữ kín token và giải thích cost guard.
 - **CP4, ngày 26-11-2026.** Exercise 5.1–5.5, AI chạy stack 3 agent, ghi kết quả `test_stateless.py` và các probe khi Redis hoạt động và khi dừng, kiểm tra log shutdown rồi dọn stack.
 - **CP5, ngày 26-11-2026.** AI triển khai config, health và readiness, log JSON, auth, rate limit và cost guard bằng Redis, graceful shutdown, Docker và cấu hình Railway. AI chạy kiểm tra tĩnh theo từng nhóm, chạy bài chấm đầy đủ với Docker, kiểm tra riêng Compose và cost guard, rồi ghi output thực tế. 
+
+- **CP6, ngày 26-11-2026.** Người học tạo Blueprint trên Render và cung cấp URL để kiểm tra. AI gọi bốn request HTTPS trên service đã deploy, xác minh mã phản hồi và ghi kết quả vào Part 3 cùng `DEPLOYMENT.md`.
