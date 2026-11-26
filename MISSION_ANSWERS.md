@@ -60,6 +60,95 @@ curl -i -X POST 'http://127.0.0.1:8010/ask' \
 - `GET /health` trả `HTTP/1.1 200 OK`, với `status` là `ok`.
 - `POST /ask` trả `HTTP/1.1 200 OK`, với `question` là `Hello`, `answer` là câu trả lời mock và `model` là `gpt-4o-mini`.
 
+## Part 2 · Docker
+
+### Exercise 2.1 · Dockerfile cơ bản
+
+1. **Base image.** `FROM python:3.11` dùng image Python 3.11 đầy đủ làm nền cho container. [Dockerfile develop, dòng 8](02-docker/develop/Dockerfile#L8)
+2. **Working directory.** `WORKDIR /app` đặt `/app` làm thư mục làm việc cho các chỉ thị tiếp theo. Ví dụ, `COPY ... .` ghi vào `/app` và `CMD` khởi động tại đó. [Dockerfile develop, dòng 11](02-docker/develop/Dockerfile#L11)
+3. **Thứ tự `COPY`.** Dockerfile copy `requirements.txt` rồi chạy `pip install` trước khi copy source. Khi chỉ sửa `app.py`, Docker có thể dùng lại cache của lớp cài dependencies. Thay đổi `requirements.txt` sẽ khiến lớp đó được build lại. [Dockerfile develop, dòng 14](02-docker/develop/Dockerfile#L14)
+4. **`CMD` và `ENTRYPOINT`.** `CMD` cung cấp lệnh mặc định hoặc các đối số mặc định cho `ENTRYPOINT`. Với dạng exec, nếu cấu hình cả hai thì Docker ghép `ENTRYPOINT` với các đối số từ `CMD`. Đối số sau tên image trong `docker run` thay thế `CMD`. Để thay `ENTRYPOINT` khi chạy, dùng `--entrypoint`. Image develop dùng `CMD ["python", "app.py"]` để đặt lệnh chạy mặc định. [Dockerfile develop, dòng 30](02-docker/develop/Dockerfile#L30)
+
+### Exercise 2.2 · Build và chạy container develop
+
+Chạy lệnh build từ gốc repo. Container dùng cổng nội bộ `8000` và mở cổng `8010` trên máy.
+
+```zsh
+docker build -f 02-docker/develop/Dockerfile -t my-agent:develop .
+docker run -d --rm --name k5-day14-cp2-dev-retry \
+  -p 127.0.0.1:8010:8000 my-agent:develop
+```
+
+Sau khi app khởi động, gọi `POST /ask` với câu hỏi trong query string.
+
+```zsh
+curl -i -X POST 'http://127.0.0.1:8010/ask?question=What%20is%20Docker%3F'
+```
+
+Phản hồi thực tế:
+
+```text
+HTTP/1.1 200 OK
+server: uvicorn
+content-type: application/json
+
+{"answer":"Container là cách đóng gói app để chạy ở mọi nơi. Build once, run anywhere!"}
+```
+
+### Exercise 2.3 · Multi-stage build và kích thước image
+
+- **Stage `builder`.** Dùng `python:3.11-slim`, cài `gcc` và `libpq-dev`, rồi dùng `pip install --user` để cài dependencies vào `/root/.local`. [Dockerfile production, dòng 16](02-docker/production/Dockerfile#L16)
+- **Stage `runtime`.** Bắt đầu từ một lớp nền `python:3.11-slim` mới, copy dependencies và mã ứng dụng, rồi chạy Uvicorn dưới user `appuser`. Nền slim và việc để công cụ build lại ở stage trước làm image cuối nhỏ hơn. [Dockerfile production, dòng 36](02-docker/production/Dockerfile#L36)
+
+```zsh
+docker build -f 02-docker/production/Dockerfile -t my-agent:advanced .
+docker image ls my-agent
+```
+
+Kích thước được Docker hiển thị trong lần đo:
+
+| Image | Cột `SIZE` | Đổi sang MB để tính |
+|---|---:|---:|
+| `my-agent:develop` | 1.67 GB | 1.670 MB |
+| `my-agent:advanced` | 240 MB | 240 MB |
+
+Dùng cùng đơn vị thập phân, tỷ lệ giảm xấp xỉ **85,6%**, tính bằng `(1670 − 240) / 1670 × 100`. Đây là giá trị xấp xỉ vì cột `SIZE` được làm tròn.
+
+### Exercise 2.4 · Docker Compose và kiểm tra Nginx
+
+```mermaid
+flowchart LR
+    client["curl trên Mac"] -->|"HTTP :80"| nginx["Nginx :80"]
+    subgraph internal["Mạng Docker internal"]
+        nginx -->|"Proxy HTTP tới agent:8000"| agent["FastAPI agent :8000"]
+        agent -.->|"REDIS_URL và phụ thuộc health check"| redis["Redis :6379"]
+        agent -.->|"QDRANT_URL và phụ thuộc health check"| qdrant["Qdrant :6333"]
+    end
+```
+
+Cả bốn service cùng dùng mạng Docker `internal` và tìm nhau bằng tên service. Compose chờ Redis và Qdrant báo healthy trước khi khởi động agent. Nginx nhận request từ máy qua cổng `80` và chuyển tới `agent:8000`. Redis được cấu hình cho cache/state và Qdrant cho lưu vector. Endpoint mock `/ask` trong bài gọi hàm `ask(question)` trực tiếp. [Docker Compose](02-docker/production/docker-compose.yml#L22) · [Nginx upstream](02-docker/production/nginx/nginx.conf#L14) · [Endpoint /ask](02-docker/production/main.py#L57)
+
+Chạy các lệnh sau trong `02-docker/production`.
+
+```zsh
+touch .env.local
+docker compose -p k5-day14-docker up -d --build --wait --wait-timeout 100
+docker compose -p k5-day14-docker ps
+curl -i 'http://127.0.0.1/health'
+curl -i -X POST 'http://127.0.0.1/ask' \
+  -H 'Content-Type: application/json' -d '{"question":"Explain microservices"}'
+```
+
+Kết quả thực tế ghi nhận một container cho mỗi service. Agent, Redis và Qdrant đều báo `healthy`, còn Nginx báo `Up`.
+
+| Request qua Nginx | Kết quả thực tế |
+|---|---|
+| `GET /health` | `HTTP/1.1 200 OK`, header `Server: nginx`, JSON có `"status":"ok"` và `"version":"2.0.0"`. |
+| `POST /ask` | `HTTP/1.1 200 OK`, header `Server: nginx`, JSON `{"answer":"Tôi là AI agent được deploy lên cloud. Câu hỏi của bạn đã được nhận."}`. |
+
+Sau khi ghi kết quả, container develop đã được dừng và stack production đã được dọn bằng `docker compose -p k5-day14-docker down`.
+
 ## AI log
 
-- **CP1, ngày 26-11-2026.** Câu hỏi gửi AI là cách xử lý xung đột cổng và cách hoàn thiện Exercise 1.1–1.3. AI đối chiếu mã nguồn, chạy các lệnh kiểm tra local và soạn phần Part 1 từ phản hồi thực tế. Người học đã tạo môi trường Python và khởi động bản production trên cổng `8010`. Phần tự đối chiếu và chỉnh sửa câu trả lời sẽ được người học bổ sung sau khi đọc lại.
+- **CP1, ngày 26-11-2026.** Câu hỏi gửi AI là cách xử lý xung đột cổng và cách hoàn thiện Exercise 1.1–1.3. AI đối chiếu mã nguồn, chạy các lệnh kiểm tra local và soạn phần Part 1 từ phản hồi thực tế. Người học đã tạo môi trường Python và khởi động bản production trên cổng `8010`. 
+- **CP2, ngày 26-11-2026.** 1–2.4. AI đọc Dockerfile và Compose, chạy lại hai lệnh build trên máy lab, đo kích thước bằng Docker, thử container develop và stack Nginx, rồi ghi kết quả vào Part 2. 
