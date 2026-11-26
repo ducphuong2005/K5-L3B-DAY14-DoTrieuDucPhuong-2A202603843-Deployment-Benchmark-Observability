@@ -211,8 +211,61 @@ Rate limiter lưu thời điểm request theo từng người dùng trong một 
 
 Hai server đã được dừng sau khi kiểm tra và cổng `8010` đã trống.
 
+## Part 5 · Scaling & Reliability
+
+### Exercise 5.1 · Liveness và readiness
+
+`GET /health` cho biết tiến trình có thể phản hồi. Trong app mẫu, nếu agent đã kết nối Redis từ lúc khởi động và sau đó mất kết nối, endpoint vẫn trả `200` với trạng thái `degraded`. `GET /ready` kiểm tra agent có sẵn sàng nhận traffic hay không. Trong lần thử chạy với Redis, probe này gọi `PING` và trả `503` khi Redis không phản hồi. Một instance còn sống vẫn có thể cần được rút khỏi luồng traffic trong lúc phụ thuộc của nó gặp sự cố. [production/app.py:187](05-scaling-reliability/production/app.py#L187) · [production/app.py:208](05-scaling-reliability/production/app.py#L208)
+
+Kết quả thực tế qua Nginx trên cổng `8080`:
+
+| Trạng thái Redis | `GET /health` | `GET /ready` |
+|---|---|---|
+| Redis đang chạy | `200 OK`, `status: ok`, `storage: redis`, `redis_connected: true` | `200 OK`, `{"ready":true,"instance":"instance-e6ca0b"}` |
+| Dừng Redis sau khi agent đã khởi động | `200 OK`, `status: degraded`, `redis_connected: false` | `503 Service Unavailable`, `{"detail":"Redis not available"}` |
+
+### Exercise 5.2 · Graceful shutdown
+
+Dockerfile chạy Uvicorn trực tiếp để tiến trình nhận `SIGTERM` khi Docker dừng container. Khi shutdown đúng cách, server ngừng nhận kết nối mới, cho request đang xử lý hoàn tất trong thời hạn shutdown và chạy phần dọn tài nguyên của ứng dụng. Phần `lifespan` trong bài mẫu ghi log khi từng instance tắt. [Dockerfile:45](05-scaling-reliability/production/Dockerfile#L45) · [production/app.py:93](05-scaling-reliability/production/app.py#L93)
+
+Khi chạy `docker compose -p k5-day14-scaling stop agent`, cả ba agent ghi `Application shutdown complete.` và thoát với mã `0`. Phép kiểm tra này xác nhận trình tự tắt của container. Việc dừng giữa lúc một request đang chạy cần một phép kiểm tra riêng.
+
+### Exercise 5.3 · Redis chia sẻ state giữa các instance
+
+Mỗi instance có bộ nhớ riêng. Nếu instance đầu ghi history vào RAM của nó, instance tiếp theo có thể nhận cùng `session_id` và vẫn không tìm thấy dữ liệu. Trong stack này, cả ba agent kết nối tới cùng Redis. App lưu history dưới khóa `session:<session_id>` bằng `SETEX` với TTL 3.600 giây, rồi đọc lại bằng `GET`. Vì mọi agent cùng truy cập khóa đó, session vẫn tiếp tục khi Nginx chuyển request sang instance khác. [production/app.py:34](05-scaling-reliability/production/app.py#L34) · [production/app.py:59](05-scaling-reliability/production/app.py#L59)
+
+### Exercise 5.4 · Load balancing với ba agent
+
+Chạy từ `05-scaling-reliability/production`. Nginx nhận request tại cổng `8080` trên máy và chuyển tới các agent qua `agent:8000` trong mạng Docker. Header `X-Served-By` cho biết địa chỉ upstream và trường `served_by` trong JSON của `POST /chat` cho biết ID của instance trả lời. `docker compose ps` xác nhận cả ba agent và Redis đều `healthy`, Nginx đang chạy. [nginx.conf](05-scaling-reliability/production/nginx.conf) · [production/app.py:150](05-scaling-reliability/production/app.py#L150)
+
+```zsh
+touch .env.local
+docker compose -p k5-day14-scaling up -d --build --scale agent=3 --wait
+docker compose -p k5-day14-scaling ps
+curl -i http://127.0.0.1:8080/health
+curl -i http://127.0.0.1:8080/ready
+python test_stateless.py
+```
+
+### Exercise 5.5 · Kết quả `test_stateless.py`
+
+```text
+Request 1: [instance-b3d69b]
+Request 2: [instance-3ec662]
+Request 3: [instance-e6ca0b]
+Request 4: [instance-b3d69b]
+Request 5: [instance-3ec662]
+Total requests: 5
+Total messages: 10
+```
+
+Script gửi 5 request `POST /chat` với cùng một session qua 3 instance rồi gọi `GET /chat/{session_id}/history`. History trả đủ **10 tin nhắn theo thứ tự**, gồm 5 câu hỏi và 5 câu trả lời. Kết quả cho thấy các agent dùng chung history qua Redis dù không xử lý các lượt ở cùng một tiến trình. Script kiểm tra việc đọc và ghi qua nhiều instance trong stack đang chạy. [test_stateless.py:49](05-scaling-reliability/production/test_stateless.py#L49)
+
+Sau khi kiểm tra, chạy `docker compose -p k5-day14-scaling down` để dọn stack và trả lại cổng `8080`.
+
 ## AI log
 
 - **CP1, ngày 26-11-2026.** Câu hỏi gửi AI là cách xử lý xung đột cổng và cách hoàn thiện Exercise 1.1–1.3. AI đối chiếu mã nguồn, chạy các lệnh kiểm tra local và soạn phần Part 1 từ phản hồi thực tế. Người học đã tạo môi trường Python và khởi động bản production trên cổng `8010`. 
 - **CP2, ngày 26-11-2026.** 1–2.4. AI đọc Dockerfile và Compose, chạy lại hai lệnh build trên máy lab, đo kích thước bằng Docker, thử container develop và stack Nginx, rồi ghi kết quả vào Part 2. 
-- **CP3, ngày 26-11-2026.** kiểm tra Exercise 4.1–4.4 và hoàn thiện Part 4. AI đọc mã nguồn, chạy test API key và JWT trên máy lab, ghi lại các status HTTP thực tế, giữ kín token và giải thích cost guard. 
+- **CP3, ngày 26-11-2026.** kiểm tra Exercise 4.1–4.4 và hoàn thiện Part 4. AI đọc mã nguồn, chạy test API key và JWT trên máy lab, ghi lại các status HTTP thực tế, giữ kín token và giải thích cost guard.
+- **CP4, ngày 26-11-2026.** Exercise 5.1–5.5, AI chạy stack 3 agent, ghi kết quả `test_stateless.py` và các probe khi Redis hoạt động và khi dừng, kiểm tra log shutdown rồi dọn stack. 
